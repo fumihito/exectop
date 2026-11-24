@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+
+# go:embed cannot refer to a directory outside the package. Refresh the
+# package-local staging directory on every build so the binary always carries
+# the current source-tree examples.
+staging='src/internal/examples/files'
+cleanup() {
+    rm -rf "$staging"
+    mkdir -p "$staging"
+    touch "$staging/.keep"
+}
+trap cleanup EXIT
+rm -rf "$staging"
+mkdir -p "$staging"
+touch "$staging/.keep"
+if [ -d exectop.d/examples ]; then
+    cp -R exectop.d/examples/. "$staging/"
+fi
+
+if [ "$#" -eq 0 ]; then
+    exec go build ./src/cmd/exectop
+fi
+
+exec go build "$@"

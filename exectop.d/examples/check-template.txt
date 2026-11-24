@@ -1,0 +1,18 @@
+新しいチェックのテンプレート
+
+#!/bin/sh
+set -eu
+# exectop: short_name="新しいチェック" description="何を検査するか" interval=1m timeout=5s tags=example
+
+# ここで実際の測定を行い、異常時は value と threshold を適切に設定する。
+value=0
+threshold=1
+if [ "$value" -ge "$threshold" ]; then
+    printf '{"summary":"check failed","value":%s,"threshold":%s,"unit":"count"}\n' "$value" "$threshold"
+    echo "condition failed" >&2
+    exit 1
+fi
+
+printf '{"summary":"check passed","value":%s,"threshold":%s,"unit":"count"}\n' "$value" "$threshold"
+echo "condition passed"
+exit 0

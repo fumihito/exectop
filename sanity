@@ -1,0 +1,97 @@
+#!/bin/sh
+set -u
+
+# Pre-push sanity checks for this repository.
+# The script intentionally has no external dependencies beyond Git, Go, and
+# the usual POSIX utilities.
+
+repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || {
+    echo "sanity: not inside a Git repository" >&2
+    exit 2
+}
+cd "$repo_root" || exit 2
+
+failures=0
+run_check() {
+    name=$1
+    shift
+    printf '%-28s' "$name"
+    if "$@"; then
+        echo "PASS"
+    else
+        echo "FAIL"
+        failures=$((failures + 1))
+    fi
+}
+
+tracked_files() {
+    git ls-files --cached --others --exclude-standard -- "$@" |
+        while IFS= read -r file; do
+            [ "$file" = "sanity" ] && continue
+            [ -f "$file" ] || continue
+            printf '%s\0' "$file"
+        done
+}
+
+check_credentials() {
+    matches=$(mktemp "${TMPDIR:-/tmp}/sanity-credentials.XXXXXX") || return 1
+    trap 'rm -f "$matches"' 0 HUP INT TERM
+
+    # These patterns cover common cloud, source-control, private-key, and
+    # generic assignment formats.  Matches are printed as file:line only.
+    if tracked_files | xargs -0 grep -IEnH -e \
+        '-----BEGIN ([A-Z0-9 ]+ )?PRIVATE KEY-----' \
+        -e 'AKIA[0-9A-Z]{16}' \
+        -e 'ASIA[0-9A-Z]{16}' \
+        -e '(gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})' \
+        -e '(xox[baprs]-[A-Za-z0-9-]{20,})' \
+        -e '(api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret)[[:space:]]*[:=][[:space:]]*[\042\047][A-Za-z0-9_./+=:-]{12,}[\042\047]' \
+        -e '(api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|passwd|secret)[[:space:]]*[:=][[:space:]]*[A-Za-z0-9_+/=-]{20,}' \
+        >"$matches" 2>/dev/null; then
+        echo "credential-like content found:"
+        # Never print matching source lines: even a failed check must not
+        # copy a credential into a terminal log or CI output.
+        sed -E 's/^([^:]+:[0-9]+):.*/\1/' "$matches"
+        return 1
+    fi
+    return 0
+}
+
+check_conflict_markers() {
+    if tracked_files | xargs -0 grep -IEnH \
+        -e '^(<<<<<<<|=======|>>>>>>>)( |$)' >/dev/null 2>&1; then
+        return 1
+    fi
+    return 0
+}
+
+check_gofmt() {
+    files=$(git ls-files --cached --others --exclude-standard -- '*.go')
+    [ -z "$files" ] || [ -z "$(printf '%s\n' "$files" | xargs gofmt -l)" ]
+}
+
+check_go() {
+    go test ./...
+}
+
+check_vet() {
+    go vet ./...
+}
+
+check_build() {
+    go build ./src/cmd/exectop
+}
+
+echo "sanity checks in $repo_root"
+run_check "credentials" check_credentials
+run_check "conflict markers" check_conflict_markers
+run_check "gofmt" check_gofmt
+run_check "go test ./..." check_go
+run_check "go vet ./..." check_vet
+run_check "go build" check_build
+
+if [ "$failures" -ne 0 ]; then
+    echo "sanity: $failures check(s) failed" >&2
+    exit 1
+fi
+echo "sanity: all checks passed"
